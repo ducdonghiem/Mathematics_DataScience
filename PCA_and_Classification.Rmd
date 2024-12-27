@@ -1,0 +1,409 @@
+---
+title: "PCA in Classification problems"
+author: "Duc Do"
+date: "2024-11-29"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+This notebook will discuss and compare several classification techniques for the [***Wisconsin Diagnostic Breast Cancer (WDBC) dataset***](https://raw.githubusercontent.com/julien-arino/math-of-data-science/refs/heads/main/CODE/wdbc.csv), which is a binary classification problem, including the use of Principle Component Analysis. The data dictionary can be accessed [***here***](https://raw.githubusercontent.com/julien-arino/math-of-data-science/refs/heads/main/CODE/wdbc.names) and more information about the dataset is [***here***](https://archive.ics.uci.edu/dataset/17/breast+cancer+wisconsin+diagnostic). 
+
+*This notebook is inspired by material from the course Mathematics of Data Science, taught by Prof. Julien Arino at the University of Manitoba.*
+
+## 1. Use `neuralnet` library and 30 attributes.
+
+Install and load `neuralnet`.
+
+```{R}
+if (!require("neuralnet")) {
+  install.packages("neuralnet")
+}
+
+library("neuralnet")
+```
+
+Create `col_names` vector to store all the column names as described in the data dictionary.
+
+```{R}
+col_names = c("ID", "Diagnosis", "Radius_Mean", "Texture_Mean", "Perimeter_Mean", "Area_Mean", "Smoothness_Mean", "Compactness_Mean", "Concavity_Mean", "Concave_Points_Mean", "Symmetry_Mean", "Fractal_Dimension_Mean", "Radius_SE", "Texture_SE", "Perimeter_SE", "Area_SE", "Smoothness_SE", "Compactness_SE", "Concavity_SE", "Concave_Points_SE", "Symmetry_SE", "Fractal_Dimension_SE", "Radius_Worst", "Texture_Worst", "Perimeter_Worst", "Area_Worst", "Smoothness_Worst", "Compactness_Worst", "Concavity_Worst", "Concave_Points_Worst", "Symmetry_Worst", "Fractal_Dimension_Worst")
+
+```
+
+Load the dataset and add column names.
+
+```{R}
+dataset = read.csv("https://raw.githubusercontent.com/julien-arino/math-of-data-science/refs/heads/main/CODE/wdbc.csv", header = FALSE, col.names = col_names)
+head(dataset)
+```
+
+Take a look at `Diagnosis` column which is the label.
+
+```{R}
+table(dataset$Diagnosis)
+barplot(table(dataset$Diagnosis), main = "Diagnosis Count", xlab = "Diagnosis", ylab = "Frequency")
+```
+
+There are 569 observations with 357 belong to class `B` (benign) and 212 belong to class `M` (malignant). This is a binary classification problem where the primary objective is to avoid missing any malignant (`M`) patient, as the cost of a false negative could cost a life. I will discuss the metric for this later.
+
+The dataset is a little bit imbalance. We may handle that later if the result is not good.
+
+Remove the `ID` column (first column) as it is not relevant for classification. As described there is no `Nan` values so no further data pre processing is needed.
+
+```{R}
+data = dataset[, -1]
+head(data)
+```
+
+Normalize the data to `N(0, 1)` to eliminate unit differences for better classification.
+
+$$
+X = \frac{X - \bar{X}}{\sigma_{X}}
+$$
+
+```{R}
+data[, -1] = scale(data[, -1])
+head(data)
+```
+
+I use 80% of the data for training and 20% for testing.
+
+```{R}
+set.seed(2740)
+
+train_idx = sample(nrow(data), 4/5 * nrow(data))
+train = data[train_idx, ]
+test = data[-train_idx, ]
+
+nrow(train)
+nrow(test)
+```
+
+Train the data. We want to predict `M` (malignant) as it is considered dangerous. `B` (benign) in the other hand, is not dangerous. I choose this model with 3 hidden layers of 4, 8 and 4 nodes on each layer respectively, just as an example.  
+
+```{R}
+nn_model = neuralnet(Diagnosis == "M" ~ ., data = train, hidden = c(4, 8, 4), linear.output=FALSE)
+summary(nn_model)
+```
+The number of parameters (weights) of the model is:
+
+```{R}
+num_weights = sum(sapply(nn_model$weights, function(layer) sum(lengths(layer))))
+num_weights
+```
+There are 205 weights for this model.
+
+Predict and print out confusion table.
+
+```{R}
+pred = predict(nn_model, newdata = test)
+
+confusion_matrix = table(test$Diagnosis == "M", pred[, 1] > 0.5)
+confusion_matrix
+
+```
+
+In the test set of 114 samples, we correctly predicted 44 malignant patients (True Positives) and 67 benign patients (True Negatives). 3 malignant patients is falsely predicted as benign (False Negative). 0 benign patient is falsely predicted as malignant (False Positive). 
+
+I make a metrics function which will return `Accuracy`, `Precision`, `Recall` and `F1 score`. For this problem, we want `Recall` to be high as the cost of False Negative is high (failing to identify a cancer patient), while False Positives are less critical (falsely identifying a cancer patient).
+
+$$
+Accuracy = \frac{TP + TN}{TP + TN + FP + FN}
+$$
+$$
+Precision = \frac{TP}{TP + FP}
+$$
+$$
+Recall = \frac{TP}{TP + FN}
+$$
+$$
+F1 = 2 \frac{Precision*Recall}{Precision + Recall}
+$$
+
+```{R}
+# Extract TP, TN, FP, FN
+TP = confusion_matrix[2, 2]  # True Positive (Malignant correctly predicted as M)
+TN = confusion_matrix[1, 1]  # True Negative (Benign correctly predicted as B)
+FP = confusion_matrix[1, 2]  # False Positive (Benign incorrectly predicted as M)
+FN = confusion_matrix[2, 1]  # False Negative (Malignant incorrectly predicted as B)
+
+metrics = function(TP, TN, FP, FN) {
+  Accuracy = (TP + TN) / (TP + TN + FP + FN)
+  Precision = TP / (TP + FP)
+  Recall = TP / (TP + FN)
+  F1_score = 2 * Precision * Recall / (Precision + Recall)
+  
+  return (list(Accuracy = Accuracy, Precision = Precision, Recall = Recall, F1_score = F1_score))
+}
+
+
+metrics(TP, TN, FP, FN)
+```
+
+The model is relatively good with $Recall = 93.61$%, while other metrics are very high. 
+
+To effectively evaluate a model, I create a cross-validation function that takes in the number of folds (k), a vector specifying the hidden layers, and the dataset, and returns the performance metrics of the model. 
+
+The model is trained on k-1 folds and tested on the remaining fold. This process is repeated k times, each time using a different fold as the test set. The final performance metric is the average of the metrics from all k iterations.
+
+```{R}
+# perform k-fold cross-validation
+cross_validation_nn = function(k, hidden_layers, data) {
+  # create k-folds
+  folds = sample(1:k, nrow(data), replace = TRUE)
+  
+  accuracies = numeric(k)
+  precisions = numeric(k)
+  recalls = numeric(k)
+  f1_scores = numeric(k)
+  
+  # loop through each fold
+  for (i in 1:k) {
+    # split data into training and test sets
+    test_idx = which(folds == i)
+    train_fold = train[-test_idx, ]
+    test_fold = train[test_idx, ]
+    
+    # train the model
+    nn_model = neuralnet(Diagnosis == "M" ~ ., data = train_fold, hidden = hidden_layers, linear.output = FALSE)
+    
+    # predict on the test set
+    pred = predict(nn_model, newdata = test_fold)
+    
+    confusion_matrix = table(test_fold$Diagnosis == "M", pred[, 1] > 0.5)
+    
+    TP = confusion_matrix[2, 2]  
+    TN = confusion_matrix[1, 1]  
+    FP = confusion_matrix[1, 2] 
+    FN = confusion_matrix[2, 1]  
+    
+    accuracies[i] = metrics(TP, TN, FP, FN)$Accuracy
+    precisions[i] = metrics(TP, TN, FP, FN)$Precision
+    recalls[i] = metrics(TP, TN, FP, FN)$Recall
+    f1_scores[i] = metrics(TP, TN, FP, FN)$F1_score
+  }
+  
+  return (list(Accuracy = mean(accuracies), Precision = mean(precisions), Recall = mean(recalls), F1_score = mean(f1_scores)))
+}
+
+```
+
+Try 3 different models 5 times with 5-fold cross validation. We use `Recall` as our metric as explained.
+
+```{R}
+set.seed(2740)
+n = 5
+
+mean(sapply(1:n, function(x) cross_validation_nn(5, c(4, 8, 4), data)$Recall))
+mean(sapply(1:n, function(x) cross_validation_nn(5, c(16, 16), data)$Recall))
+mean(sapply(1:n, function(x) cross_validation_nn(5, c(32), data)$Recall))
+
+```
+
+Seem like the model with 1 hidden layers of 32 nodes perform the best with $Recall = 96.08$%.
+
+
+## 2. Less parameters by using PCA for dimension reduction (use 3 principle components).
+
+### a) Perform PCA
+
+First, I compute correlation coefficient matrix for 30 attributes and visualize it (red for high correlation, white for no correlation and blue for low correlation).
+
+```{R}
+# correlation matrix
+cor_matrix = cor(data[, -1])
+
+# visualize
+heatmap(cor_matrix, main = "Correlation Matrix", 
+        col = colorRampPalette(c("blue", "white", "red"))(200), 
+        scale = "none", 
+        cexRow = 0.6, cexCol = 0.6,
+        Rowv = NA, Colv = NA)  
+
+```
+
+Some attribute pairs are highly correlated, which may lead to overfitting if both are used. To address this, I will apply PCA to the dataset. It would also help reduce the number of parameters, which means less resources used.
+
+**Perform `PCA` for row reduction (use `prcomp`).**
+
+```{R}
+pca_result = prcomp(data[, -1], center = TRUE, scale = TRUE)
+summary(pca_result)
+```
+
+Compute the proportion of variations $= \frac{\sigma_{i}^2}{\sum_{j=1}^{30} \sigma_{j}^2}$ where $\sigma_{i}$ is the standard deviation of $PC_i$, obtained from the vector `pca_result$sdev`.
+
+```{R}
+prcomp_proportionVariate = pca_result$sdev^2/sum(pca_result$sdev^2)
+round(prcomp_proportionVariate, 5)
+
+sum(round(prcomp_proportionVariate, 5)[1:3])
+```
+
+I use `PC1`, `PC2` and `PC3` for classification. They represent 72.64% variation of this dataset.
+
+Some visualization for `PC1` and `PC2`.
+
+```{R}
+plot(pca_result$x[, 1], pca_result$x[, 2], xlab = "PC1(44.27%)", ylab = "PC2(18.97%)", col = "red", pch = 19, main = "PCA dimension reduction")
+```
+
+Create a new data set with 4 attributes (Diagnosis, PC1, PC2, PC3).
+
+```{R}
+# Create data.PC3 with the first column and the first 3 principal components
+data.PC3 = data.frame(Diagnosis = data[, 1], PC1 = pca_result$x[, 1], PC2 = pca_result$x[, 2], PC3 = pca_result$x[, 3])
+
+head(data.PC3)
+```
+
+**Or some may prefer `PCA` from scratch (without using `prcomp`) to understand it better.**
+
+*This part is just for reference on how to mathematically perform `PCA` as we would do by hand.*
+
+Compute the covariance matrix for this data: 
+
+$$
+S = \frac{1}{n-1} X^{T} X
+$$
+
+```{R}
+X = as.matrix(data[, -1])
+S = (1/(dim(X)[1]-1)) * t(X) %*% X
+```
+
+Compute its eigenvalues. They represent the proportion of variation explained by each principal component.
+
+```{R}
+ev = eigen(S)
+```
+
+The proportion of variation for each principal component i is $\frac{e_{i}}{\Sigma e}$.
+
+```{R}
+proportionVariate = ev$values/(sum(ev$values))
+round(proportionVariate, 5)
+sum(proportionVariate[1:3])
+```
+
+Since the covariance matrix `S` is symmetric, its eigenvectors are orthogonal. The eigenvectors matrix of `S` is our wanted `PCA` basis.
+
+Next, we compute the change of basis `P` from the standard basis to the eigenvector basis.
+First, create an identity matrix and combine with the eigenvector matrix to get the augmented matrix `A`.
+
+```{R}
+Id = diag(1, nrow =dim(ev$vectors)[1])
+A = cbind(ev$vectors, Id)
+```
+
+Compute the RREF and extract the relevant change of basis matrix `P`.
+
+$$
+RREF(eigenvectors(S)|I) = RREF(A) = [I|P]
+$$
+```{R}
+if (!require("pracma")) {
+  install.packages("pracma")
+}
+
+library(pracma)
+
+P = pracma::rref(A)[,(dim(ev$vectors)[2]+1):dim(A)[2]]
+```
+
+Finally, compute the new data representation after the rotation. Note that $X_{i}^{new} = P X_{i}$ where $X_{i}$ is a sample from the data, or a row of $X$. We generalizes this to the entire dataset as $X_{new} = X P^{T}$.
+
+```{R}
+X_new = X %*% t(P)
+head(X_new)
+```
+
+**Compare the new data representation from scratch and with `prcomp`.**
+
+```{R}
+all.equal(abs(pca_result$x), abs(X_new), tolerance = 1e-10, check.class = FALSE, check.attributes = FALSE)
+```
+
+We see that our manually computed result for $X_{new}$ is correct, which means we can use `X_new` instead of `pca_result$x`.
+
+### b) Result of PCA
+
+Similarly, use the `cross_validation_nn` function created before to assess the models (I use less nodes for these model compared to those without PCA).
+
+```{R}
+set.seed(2740)
+
+mean(sapply(1:n, function(x) cross_validation_nn(5, c(2, 4, 2), data.PC3)$Recall))
+mean(sapply(1:n, function(x) cross_validation_nn(5, c(8, 8), data.PC3)$Recall))
+mean(sapply(1:n, function(x) cross_validation_nn(5, c(16), data.PC3)$Recall))
+```
+
+Similar, the model number 3 with 1 hidden layers with 16 nodes perform the best with $Recall = 96.71$%, which is slightly better but with significant less parameters compared to without-PCA model. 
+
+```{R}
+nn_model_1 = neuralnet(Diagnosis == "M" ~ ., data = data, hidden = c(32), linear.output=FALSE)
+sum(sapply(nn_model_1$weights, function(layer) sum(lengths(layer))))
+
+nn_model_2 = neuralnet(Diagnosis == "M" ~ ., data = data.PC3, hidden = c(16), linear.output=FALSE)
+sum(sapply(nn_model_2$weights, function(layer) sum(lengths(layer))))
+
+
+```
+
+The best model from part 1 uses 1025 parameters, while the best one in part 2 uses only 81.
+
+## 3. KNN (K-Nearest Neighbors)
+
+Install and load `class` package for the `knn` function.
+
+```{R}
+if (!require("class")) {
+  install.packages("class")
+}
+
+library("class")
+```
+
+I use the already computed `train` and `test` sets for `KNN`, with $k = 5$ (meaning that the class of a sample will be determined by its 5 nearest neighbors).
+
+```{R}
+set.seed(2740)
+
+# prepare training and test input
+train_labels = train$Diagnosis
+test_labels = test$Diagnosis
+train_features = train[, -1]
+test_features = test[, -1]
+
+# apply KNN
+k = 5  # number of neighbors
+knn_predictions = knn(train_features, test_features, cl = train_labels, k = k)
+
+# results
+confusion_matrix.KNN = table(test_labels, knn_predictions)
+rownames(confusion_matrix.KNN) = c("Actual B", "Actual M")
+colnames(confusion_matrix.KNN) = c("Predicted B", "Predicted M")
+
+confusion_matrix.KNN
+
+```
+
+
+```{R}
+TP.KNN = confusion_matrix.KNN[2, 2]
+TN.KNN = confusion_matrix.KNN[1, 1]
+FP.KNN = confusion_matrix.KNN[1, 2]
+FN.KNN = confusion_matrix.KNN[2, 1]
+
+
+metrics(TP.KNN, TN.KNN, FP.KNN, FN.KNN)
+```
+
+$Recall = 93.62%$ is slightly worse than neural net models, but it is still acceptable.
+
+## 4. Conclusion
+
+The best model is the neural net (1 hidden layer with 16 nodes) with PCA applied on the data from part 2 with $Recall = 96.71$%, which is quite high compared to the best $accuracy = 97.5$% given in the data dictionary.
+
