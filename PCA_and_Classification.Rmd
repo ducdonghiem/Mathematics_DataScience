@@ -263,7 +263,7 @@ head(data.PC3)
 
 *This part is just for reference on how to mathematically perform `PCA` as we would do by hand.*
 
-Compute the covariance matrix for this data: 
+Compute the covariance matrix for this data (this formula is only for centered data): 
 
 $$
 S = \frac{1}{n-1} X^{T} X
